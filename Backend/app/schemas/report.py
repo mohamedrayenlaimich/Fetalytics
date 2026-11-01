@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 class ClinicalReportBase(BaseModel):
     report_title: str = "Fetal Biometry & Anatomy Report"
@@ -35,5 +35,4 @@ class ClinicalReportResponse(ClinicalReportBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

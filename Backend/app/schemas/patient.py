@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 class PatientBase(BaseModel):
     anonymized_id: str = Field(..., description="Unique anonymized patient identifier, e.g. PAT-2026-001")
@@ -21,5 +21,4 @@ class PatientResponse(PatientBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

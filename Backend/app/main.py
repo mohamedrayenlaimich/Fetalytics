@@ -4,12 +4,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from Backend.app.core.database import get_db, engine, Base
+from Backend.app.core.migrations import run_schema_migrations
 from Backend.app.core.config import settings
 from Backend.app.api.v1.router import api_v1_router
 import Backend.app.models  # Ensures all models are recognized by SQLAlchemy
 
-# Automatically ensure tables are created
-Base.metadata.create_all(bind=engine)
+# Automatically ensure tables and schema migrations are applied
+run_schema_migrations(engine)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

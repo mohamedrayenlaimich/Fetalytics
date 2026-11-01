@@ -1,7 +1,10 @@
-# Environment variables
+# Environment variables & secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
 
 # Python
 __pycache__/
@@ -29,6 +32,7 @@ share/python-wheels/
 .venv/
 venv/
 ENV/
+.pytest_cache/
 
 # Jupyter Notebooks
 .ipynb_checkpoints
@@ -37,8 +41,35 @@ ENV/
 .vscode/
 .idea/
 
-# Large media / uploads
+# Large media, raw medical files, datasets, and model artifacts
 uploads/
 Backend/uploads/
 results/*
 !results/.gitkeep
+!results/annotated_videos/.gitkeep
+!results/measurements/.gitkeep
+!results/reports/.gitkeep
+videos/input/*
+!videos/input/.gitkeep
+videos/output/*
+!videos/output/.gitkeep
+AI/datasets/raw/
+AI/datasets/extracted/
+AI/datasets/cache/
+AI/models/weights/
+AI/models/checkpoints/
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.h5
+*.dcm
+*.nii
+*.nii.gz
+*.mp4
+*.avi
+*.mov
+*.zip
+*.tar.gz
+tmp_ingest/
+.tmp/
