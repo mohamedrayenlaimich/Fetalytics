@@ -44,6 +44,22 @@ def verify_gpu_environment() -> str:
         return "cpu"
 
 
+def extract_all_nested_zips(target_dir: Path, max_depth: int = 3) -> None:
+    """Recursively unpack any nested zip files (e.g. val.zip, test.zip inside DatasetV3.zip)."""
+    for depth in range(max_depth):
+        inner_zips = [z for z in target_dir.rglob("*.zip") if z.is_file() and z.stat().st_size > 1000]
+        if not inner_zips:
+            break
+        print(f"  [*] Found {len(inner_zips)} archive(s) to unpack (depth {depth+1}): {[z.name for z in inner_zips]}", flush=True)
+        for zf in inner_zips:
+            print(f"  [*] Unpacking archive: {zf.name} ({zf.stat().st_size / 1e6:.1f} MB)...", flush=True)
+            try:
+                safe_inspect_and_extract_zip(zf, target_dir)
+                zf.unlink()  # Remove zip to free disk space
+            except Exception as e:
+                print(f"  [!] Notice unpacking {zf.name}: {e}")
+
+
 def auto_discover_drive_dataset(target_extract_dir: Path) -> Optional[Path]:
     """Search for dataset in mounted Google Drive or download via gdown."""
     search_roots = [
@@ -68,10 +84,12 @@ def auto_discover_drive_dataset(target_extract_dir: Path) -> Optional[Path]:
                         for sz in sub_zips:
                             print(f"  [*] Extracting found Drive zip: {sz.name}...", flush=True)
                             safe_inspect_and_extract_zip(sz, target_extract_dir)
+                        extract_all_nested_zips(target_extract_dir)
                         return target_extract_dir
                 elif item.is_file() and item.suffix.lower() == ".zip":
                     print(f"  [*] Extracting found Drive zip: {item.name}...", flush=True)
                     safe_inspect_and_extract_zip(item, target_extract_dir)
+                    extract_all_nested_zips(target_extract_dir)
                     return target_extract_dir
         except Exception as e:
             print(f"  [!] Notice during Drive scan of {root}: {e}")
@@ -84,6 +102,7 @@ def auto_discover_drive_dataset(target_extract_dir: Path) -> Optional[Path]:
         out_gdown.mkdir(parents=True, exist_ok=True)
         print(f"  [*] Attempting direct download of Google Drive folder ({folder_id})...", flush=True)
         gdown.download_folder(id=folder_id, output=str(out_gdown), quiet=False, use_cookies=False)
+        extract_all_nested_zips(out_gdown)
         if list(out_gdown.rglob("*.avi")) or list(out_gdown.rglob("*.zip")):
             return out_gdown
     except Exception as ge:
@@ -101,6 +120,9 @@ def ensure_cloud_dataset(
     val_dir = extracted_dir / "val"
     test_dir = extracted_dir / "test"
 
+    # First unpack any existing nested zips that were already extracted
+    extract_all_nested_zips(extracted_dir)
+
     # 1. Check if user passed an explicit --data-path
     if drive_path:
         cand = Path(drive_path)
@@ -109,12 +131,14 @@ def ensure_cloud_dataset(
             if cand.is_file() and cand.suffix.lower() == ".zip":
                 print(f"  [*] Extracting specified ZIP archive {cand.name}...", flush=True)
                 safe_inspect_and_extract_zip(cand, extracted_dir)
+                extract_all_nested_zips(extracted_dir)
             elif cand.is_dir():
                 zip_files = list(cand.glob("*.zip"))
                 if zip_files:
                     for zf in zip_files:
                         print(f"  [*] Extracting zip inside folder: {zf.name}...", flush=True)
                         safe_inspect_and_extract_zip(zf, extracted_dir)
+                    extract_all_nested_zips(extracted_dir)
                 if (cand / "videos").exists() or (cand / "val" / "videos").exists():
                     return cand
 
@@ -134,14 +158,10 @@ def ensure_cloud_dataset(
     # 3. Auto-discover from mounted Google Drive or gdown
     print("  [*] Searching for dataset in Google Drive...", flush=True)
     discovered = auto_discover_drive_dataset(extracted_dir)
-    if discovered:
-        print(f"  [+] Successfully connected to Google Drive dataset at: {discovered}")
-        # If discovered folder has zip files, unpack them
-        for zf in discovered.glob("*.zip"):
-            print(f"  [*] Extracting {zf.name}...", flush=True)
-            safe_inspect_and_extract_zip(zf, extracted_dir)
-        if (extracted_dir / "val" / "videos").exists() or (extracted_dir / "videos").exists():
-            return extracted_dir
+    extract_all_nested_zips(extracted_dir)
+
+    if discovered and discovered != extracted_dir:
+        extract_all_nested_zips(discovered)
         if (discovered / "val" / "videos").exists() or (discovered / "videos").exists():
             return discovered
 
@@ -164,10 +184,21 @@ def ensure_cloud_dataset(
         except Exception as b2_err:
             print(f"  [!] Backblaze B2 notice: {b2_err}. Proceeding with local/Drive data.")
 
+    extract_all_nested_zips(extracted_dir)
+
     val_count = len(list((extracted_dir / "val" / "videos").glob("*.avi")))
     test_count = len(list((extracted_dir / "test" / "videos").glob("*.avi")))
     flat_count = len(list((extracted_dir / "videos").glob("*.avi")))
     total_found = val_count + test_count + flat_count
+
+    if total_found == 0:
+        for sub in extracted_dir.iterdir():
+            if sub.is_dir():
+                sub_vids = len(list((sub / "val" / "videos").glob("*.avi"))) + len(list((sub / "test" / "videos").glob("*.avi"))) + len(list((sub / "videos").glob("*.avi")))
+                if sub_vids > 0:
+                    print(f"  [+] Found extracted dataset in subfolder: {sub} ({sub_vids} cases)")
+                    return sub
+
     print(f"  [+] Total Ultrasound Cases Located: {total_found}")
     return extracted_dir
 
