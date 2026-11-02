@@ -44,6 +44,54 @@ def verify_gpu_environment() -> str:
         return "cpu"
 
 
+def auto_discover_drive_dataset(target_extract_dir: Path) -> Optional[Path]:
+    """Search for dataset in mounted Google Drive or download via gdown."""
+    search_roots = [
+        Path("/content/dataset_drive"),
+        Path("/content/drive/MyDrive"),
+        Path("/content/drive/Shareddrives"),
+    ]
+
+    for root in search_roots:
+        if not root.exists():
+            continue
+        if (root / "videos").exists() or (root / "val" / "videos").exists():
+            return root
+
+        try:
+            for item in root.iterdir():
+                if item.is_dir():
+                    if (item / "videos").exists() or (item / "val" / "videos").exists():
+                        return item
+                    sub_zips = list(item.glob("*.zip"))
+                    if sub_zips:
+                        for sz in sub_zips:
+                            print(f"  [*] Extracting found Drive zip: {sz.name}...", flush=True)
+                            safe_inspect_and_extract_zip(sz, target_extract_dir)
+                        return target_extract_dir
+                elif item.is_file() and item.suffix.lower() == ".zip":
+                    print(f"  [*] Extracting found Drive zip: {item.name}...", flush=True)
+                    safe_inspect_and_extract_zip(item, target_extract_dir)
+                    return target_extract_dir
+        except Exception as e:
+            print(f"  [!] Notice during Drive scan of {root}: {e}")
+
+    # If Drive is empty or not mounted, try gdown on the user's Google Drive folder
+    folder_id = "1am61JzoUFojmqvhQ1ztc2dllkmxtmlSD"
+    try:
+        import gdown
+        out_gdown = Path("/content/dataset_drive")
+        out_gdown.mkdir(parents=True, exist_ok=True)
+        print(f"  [*] Attempting direct download of Google Drive folder ({folder_id})...", flush=True)
+        gdown.download_folder(id=folder_id, output=str(out_gdown), quiet=False, use_cookies=False)
+        if list(out_gdown.rglob("*.avi")) or list(out_gdown.rglob("*.zip")):
+            return out_gdown
+    except Exception as ge:
+        print(f"  [!] gdown automatic download note: {ge}")
+
+    return None
+
+
 def ensure_cloud_dataset(
     extracted_dir: Path,
     drive_path: Optional[str] = None,
@@ -53,40 +101,26 @@ def ensure_cloud_dataset(
     val_dir = extracted_dir / "val"
     test_dir = extracted_dir / "test"
 
-    # 1. Check if user provided or has Google Drive dataset
-    candidate_paths = []
+    # 1. Check if user passed an explicit --data-path
     if drive_path:
-        candidate_paths.append(Path(drive_path))
-    # Standard Colab Google Drive mount search locations
-    candidate_paths.extend([
-        Path("/content/dataset_drive"),
-        Path("/content/drive/MyDrive/dataset"),
-        Path("/content/drive/MyDrive/DatasetV3"),
-        Path("/content/drive/MyDrive/Fetalytics"),
-    ])
+        cand = Path(drive_path)
+        if cand.exists():
+            print(f"  [+] Using specified dataset path: {cand}")
+            if cand.is_file() and cand.suffix.lower() == ".zip":
+                print(f"  [*] Extracting specified ZIP archive {cand.name}...", flush=True)
+                safe_inspect_and_extract_zip(cand, extracted_dir)
+            elif cand.is_dir():
+                zip_files = list(cand.glob("*.zip"))
+                if zip_files:
+                    for zf in zip_files:
+                        print(f"  [*] Extracting zip inside folder: {zf.name}...", flush=True)
+                        safe_inspect_and_extract_zip(zf, extracted_dir)
+                if (cand / "videos").exists() or (cand / "val" / "videos").exists():
+                    return cand
 
-    for cand in candidate_paths:
-        if not cand.exists():
-            continue
-        print(f"  [+] Found dataset source in Drive: {cand}")
-        if cand.is_file() and cand.suffix.lower() == ".zip":
-            print(f"  [*] Extracting Drive ZIP archive {cand.name}...", flush=True)
-            safe_inspect_and_extract_zip(cand, extracted_dir)
-        elif cand.is_dir():
-            # Check for inner zip files in Drive folder
-            zip_files = list(cand.glob("*.zip"))
-            if zip_files:
-                for zf in zip_files:
-                    print(f"  [*] Extracting Drive zip: {zf.name}...", flush=True)
-                    safe_inspect_and_extract_zip(zf, extracted_dir)
-            # Or if it's already an extracted folder with videos/
-            if (cand / "videos").exists() or (cand / "val" / "videos").exists():
-                print(f"  [+] Using Drive directory structure directly: {cand}")
-                return cand
-
+    # 2. Check if already extracted locally
     val_vids = list((val_dir / "videos").glob("*.avi")) if (val_dir / "videos").exists() else []
     test_vids = list((test_dir / "videos").glob("*.avi")) if (test_dir / "videos").exists() else []
-
     if len(val_vids) >= 40 and len(test_vids) >= 300:
         print(f"  [+] Dataset already present on disk: {len(val_vids) + len(test_vids)} paired ultrasound cases.")
         return extracted_dir
@@ -97,29 +131,44 @@ def ensure_cloud_dataset(
             print(f"  [+] Dataset ready in flat directory: {flat_count} ultrasound videos.")
             return extracted_dir
 
-    # 2. Fallback to Backblaze B2 if Drive folder did not supply all partitions
-    print("  [*] Connecting to Backblaze B2 to fetch dataset partitions...")
-    pipeline = DatasetIngestionPipeline(db=None, storage=B2StorageService(bucket_name=bucket_name))
+    # 3. Auto-discover from mounted Google Drive or gdown
+    print("  [*] Searching for dataset in Google Drive...", flush=True)
+    discovered = auto_discover_drive_dataset(extracted_dir)
+    if discovered:
+        print(f"  [+] Successfully connected to Google Drive dataset at: {discovered}")
+        # If discovered folder has zip files, unpack them
+        for zf in discovered.glob("*.zip"):
+            print(f"  [*] Extracting {zf.name}...", flush=True)
+            safe_inspect_and_extract_zip(zf, extracted_dir)
+        if (extracted_dir / "val" / "videos").exists() or (extracted_dir / "videos").exists():
+            return extracted_dir
+        if (discovered / "val" / "videos").exists() or (discovered / "videos").exists():
+            return discovered
 
-    for subset in ("val", "test"):
-        sub_vids = list((extracted_dir / subset / "videos").glob("*.avi")) if (extracted_dir / subset / "videos").exists() else []
-        if len(sub_vids) > 0:
-            print(f"  [+] Subset '{subset}' already extracted ({len(sub_vids)} videos). Skipping download.")
-            continue
+    # 4. Fallback to Backblaze B2 only if credentials are set
+    if settings.b2_is_configured:
+        try:
+            print("  [*] Connecting to Backblaze B2 to fetch dataset partitions...")
+            pipeline = DatasetIngestionPipeline(db=None, storage=B2StorageService(bucket_name=bucket_name))
 
-        print(f"  [*] Downloading {subset}.zip from Backblaze B2 (bucket: {bucket_name})...", flush=True)
-        local_zip = pipeline.ensure_sample_archive_from_b2(
-            bucket=bucket_name,
-            outer_key="datasets/DatasetV3.zip",
-            inner_subset=subset,
-        )
-        print(f"  [+] Downloaded {subset}.zip ({local_zip.stat().st_size / 1e6:.1f} MB). Extracting...", flush=True)
-        report = safe_inspect_and_extract_zip(local_zip, extracted_dir)
-        print(f"  [+] Extracted {len(report.extracted_files)} files for subset '{subset}'.", flush=True)
+            for subset in ("val", "test"):
+                sub_vids = list((extracted_dir / subset / "videos").glob("*.avi")) if (extracted_dir / subset / "videos").exists() else []
+                if len(sub_vids) > 0:
+                    continue
+                local_zip = pipeline.ensure_sample_archive_from_b2(
+                    bucket=bucket_name,
+                    outer_key="datasets/DatasetV3.zip",
+                    inner_subset=subset,
+                )
+                safe_inspect_and_extract_zip(local_zip, extracted_dir)
+        except Exception as b2_err:
+            print(f"  [!] Backblaze B2 notice: {b2_err}. Proceeding with local/Drive data.")
 
     val_count = len(list((extracted_dir / "val" / "videos").glob("*.avi")))
     test_count = len(list((extracted_dir / "test" / "videos").glob("*.avi")))
-    print(f"  [+] Dataset Ready: {val_count} val videos + {test_count} test videos = {val_count + test_count} total cases.")
+    flat_count = len(list((extracted_dir / "videos").glob("*.avi")))
+    total_found = val_count + test_count + flat_count
+    print(f"  [+] Total Ultrasound Cases Located: {total_found}")
     return extracted_dir
 
 
