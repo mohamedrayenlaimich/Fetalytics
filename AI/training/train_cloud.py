@@ -9,6 +9,7 @@ uploads the checkpoint to Backblaze B2, and registers in Neon PostgreSQL.
 import argparse
 import os
 import sys
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -54,8 +55,10 @@ def extract_all_nested_zips(target_dir: Path, max_depth: int = 3) -> None:
         for zf in inner_zips:
             print(f"  [*] Unpacking archive: {zf.name} ({zf.stat().st_size / 1e6:.1f} MB)...", flush=True)
             try:
-                safe_inspect_and_extract_zip(zf, target_dir)
+                with zipfile.ZipFile(zf, "r") as z:
+                    z.extractall(target_dir)
                 zf.unlink()  # Remove zip to free disk space
+                print(f"  [+] Unpacked {zf.name} successfully.", flush=True)
             except Exception as e:
                 print(f"  [!] Notice unpacking {zf.name}: {e}")
 
@@ -83,12 +86,14 @@ def auto_discover_drive_dataset(target_extract_dir: Path) -> Optional[Path]:
                     if sub_zips:
                         for sz in sub_zips:
                             print(f"  [*] Extracting found Drive zip: {sz.name}...", flush=True)
-                            safe_inspect_and_extract_zip(sz, target_extract_dir)
+                            with zipfile.ZipFile(sz, "r") as z:
+                                z.extractall(target_extract_dir)
                         extract_all_nested_zips(target_extract_dir)
                         return target_extract_dir
                 elif item.is_file() and item.suffix.lower() == ".zip":
                     print(f"  [*] Extracting found Drive zip: {item.name}...", flush=True)
-                    safe_inspect_and_extract_zip(item, target_extract_dir)
+                    with zipfile.ZipFile(item, "r") as z:
+                        z.extractall(target_extract_dir)
                     extract_all_nested_zips(target_extract_dir)
                     return target_extract_dir
         except Exception as e:

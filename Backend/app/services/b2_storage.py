@@ -20,6 +20,7 @@ logger = logging.getLogger("fetalytics.storage")
 
 # Permitted file extensions inside dataset archives
 ALLOWED_ARCHIVE_EXTENSIONS: Set[str] = {
+    ".zip",
     ".png",
     ".jpg",
     ".jpeg",
