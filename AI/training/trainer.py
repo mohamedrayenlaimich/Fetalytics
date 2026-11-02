@@ -429,28 +429,25 @@ def load_iugc_samples_from_extracted_dir(
     """
     val_dir = extracted_root / "val"
     test_dir = extracted_root / "test"
+    train_dir = extracted_root / "train"
 
     splits: Dict[str, List[TrainingSample]] = {"train": [], "val": [], "test": []}
     split_subjects: Dict[str, List[str]] = {"train": [], "val": [], "test": []}
 
-    if val_dir.exists():
-        val_samples = _load_subset_directory_samples(val_dir, preprocessing_config)
-        val_sids = sorted({s.subject_id for s in val_samples})
-        val_split_map = assign_subject_splits(val_sids, seed=seed, ratios=(0.70, 0.15, 0.15))
+    # Discover any subset subdirectories (val, test, train) or flat root
+    target_dirs = []
+    if (extracted_root / "videos").exists():
+        target_dirs.append(extracted_root)
+    for d in (val_dir, test_dir, train_dir):
+        if d.exists() and d not in target_dirs:
+            target_dirs.append(d)
 
-        for s in val_samples:
-            sp = val_split_map[s.subject_id]
-            splits[sp].append(s)
-            if s.subject_id not in split_subjects[sp]:
-                split_subjects[sp].append(s.subject_id)
-
-    if test_dir.exists():
-        extra_samples = _load_subset_directory_samples(test_dir, preprocessing_config, max_videos=max_train_videos)
-        extra_sids = sorted({s.subject_id for s in extra_samples})
-        # Partition patient studies by 14-digit patient timestamp into train (70%), val (15%), test (15%)
-        extra_split_map = assign_subject_splits(extra_sids, seed=seed, ratios=(0.70, 0.15, 0.15))
-        for s in extra_samples:
-            sp = extra_split_map[s.subject_id]
+    for sdir in target_dirs:
+        samples = _load_subset_directory_samples(sdir, preprocessing_config, max_videos=max_train_videos)
+        sids = sorted({s.subject_id for s in samples})
+        split_map = assign_subject_splits(sids, seed=seed, ratios=(0.70, 0.15, 0.15))
+        for s in samples:
+            sp = split_map[s.subject_id]
             splits[sp].append(s)
             if s.subject_id not in split_subjects[sp]:
                 split_subjects[sp].append(s.subject_id)
