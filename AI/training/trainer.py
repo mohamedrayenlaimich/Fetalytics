@@ -303,7 +303,7 @@ def _load_subset_directory_samples(
     seg_info: Dict[str, int] = {}
     seg_csv = subset_dir / "seg" / "seg_info.csv"
     if seg_csv.exists():
-        with open(seg_csv, "r", encoding="utf-8") as f:
+        with open(seg_csv, "r", encoding="utf-8", errors="replace") as f:
             for row in csv.DictReader(f):
                 fn = (row.get("filename") or "").strip()
                 idx_str = (row.get("labeled_frame_index") or row.get("labeled_index") or "0").strip()
@@ -316,7 +316,7 @@ def _load_subset_directory_samples(
     for info_name in ("val_info.csv", "test_info.csv", "train_info.csv"):
         info_csv = subset_dir / info_name
         if info_csv.exists():
-            with open(info_csv, "r", encoding="utf-8") as f:
+            with open(info_csv, "r", encoding="utf-8", errors="replace") as f:
                 for row in csv.DictReader(f):
                     fn = (row.get("filename") or "").strip()
                     try:
@@ -333,7 +333,7 @@ def _load_subset_directory_samples(
     for lm_name in ("landmarks.json", "landmark.json"):
         lm_path = subset_dir / "seg" / lm_name
         if lm_path.exists():
-            landmarks_data.update(json.loads(lm_path.read_text(encoding="utf-8")))
+            landmarks_data.update(json.loads(lm_path.read_text(encoding="utf-8", errors="replace")))
 
     videos = sorted((subset_dir / "videos").glob("*.avi"))
     if max_videos is not None:
