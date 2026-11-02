@@ -10,11 +10,6 @@ The system aims to automatically detect, segment, track, and measure
 relevant fetal anatomical structures and present the results through
 an interactive interface.
 
-> ⚠️ DISCLAIMER
->
-> Fetalytics is a research and decision-support prototype.
-> It is not intended to replace qualified healthcare professionals
-> or provide autonomous medical diagnosis.
 
 ---
 
