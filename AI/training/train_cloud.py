@@ -278,6 +278,19 @@ def main() -> int:
     print(f"  QC Accepted Contours:   {bio['qc_accepted_contours']} / {bio['qc_accepted_contours'] + bio['qc_rejected_contours']}")
     print(f"  B2 Model Artifact Key:  {report.get('b2_artifact_key')}")
     print("=" * 70 + "\n")
+
+    # Automatically back up trained checkpoint and diagnostics to Google Drive if mounted
+    ckpt_path = Path(report.get("checkpoint_path", PROJECT_ROOT / "AI" / "models" / "weights" / f"{report['version_tag']}.pt"))
+    drive_models_dir = Path("/content/drive/MyDrive/Fetalytics_Models")
+    if Path("/content/drive/MyDrive").exists() and ckpt_path.exists():
+        import shutil
+        drive_models_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ckpt_path, drive_models_dir / ckpt_path.name)
+        report_json = PROJECT_ROOT / "results" / "reports" / "training_evaluation_report.json"
+        if report_json.exists():
+            shutil.copy2(report_json, drive_models_dir / report_json.name)
+        print(f"  [+] Saved trained checkpoint to Google Drive: {drive_models_dir / ckpt_path.name}")
+
     return 0
 
 
