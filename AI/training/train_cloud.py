@@ -64,11 +64,14 @@ def extract_all_nested_zips(target_dir: Path, max_depth: int = 3) -> None:
 
 
 def auto_discover_drive_dataset(target_extract_dir: Path) -> Optional[Path]:
-    """Search for dataset in mounted Google Drive or download via gdown."""
+    """Search for dataset in mounted Google Drive, Drive API, or download via gdown."""
+    folder_id = "1am61JzoUFojmqvhQ1ztc2dllkmxtmlSD"
     search_roots = [
         Path("/content/dataset_drive"),
+        Path(f"/content/drive/.shortcut-targets-by-id/{folder_id}"),
         Path("/content/drive/MyDrive"),
         Path("/content/drive/Shareddrives"),
+        Path("/content/drive"),
     ]
 
     for root in search_roots:
@@ -78,29 +81,66 @@ def auto_discover_drive_dataset(target_extract_dir: Path) -> Optional[Path]:
             return root
 
         try:
-            for item in root.iterdir():
-                if item.is_dir():
-                    if (item / "videos").exists() or (item / "val" / "videos").exists():
-                        return item
-                    sub_zips = list(item.glob("*.zip"))
-                    if sub_zips:
-                        for sz in sub_zips:
-                            print(f"  [*] Extracting found Drive zip: {sz.name}...", flush=True)
-                            with zipfile.ZipFile(sz, "r") as z:
-                                z.extractall(target_extract_dir)
-                        extract_all_nested_zips(target_extract_dir)
-                        return target_extract_dir
-                elif item.is_file() and item.suffix.lower() == ".zip":
-                    print(f"  [*] Extracting found Drive zip: {item.name}...", flush=True)
-                    with zipfile.ZipFile(item, "r") as z:
+            # Recursive search up to all folders in Drive for DatasetV3.zip or partition zips
+            cand_zips = list(root.rglob("*Dataset*.zip")) + list(root.rglob("*dataset*.zip"))
+            if not cand_zips:
+                cand_zips = [
+                    z for z in root.rglob("*.zip")
+                    if any(k in z.name.lower() for k in ("val", "test", "train", "fetal", "iugc"))
+                ]
+            if cand_zips:
+                for sz in cand_zips:
+                    print(f"  [*] Extracting found Drive zip: {sz}...", flush=True)
+                    with zipfile.ZipFile(sz, "r") as z:
                         z.extractall(target_extract_dir)
-                    extract_all_nested_zips(target_extract_dir)
-                    return target_extract_dir
+                extract_all_nested_zips(target_extract_dir)
+                return target_extract_dir
         except Exception as e:
             print(f"  [!] Notice during Drive scan of {root}: {e}")
 
-    # If Drive is empty or not mounted, try gdown on the user's Google Drive folder
-    folder_id = "1am61JzoUFojmqvhQ1ztc2dllkmxtmlSD"
+    # Try authenticated Google Drive API v3 (works in Colab even for private/shared folders)
+    try:
+        from google.colab import auth
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseDownload
+        import io
+
+        print("  [*] Authenticating with Google Drive API to locate DatasetV3...", flush=True)
+        auth.authenticate_user()
+        service = build("drive", "v3")
+
+        # Search inside the target folder ID or anywhere in Drive for DatasetV3.zip
+        query = f"('{folder_id}' in parents or name contains 'DatasetV3' or name contains 'val-2025' or name contains 'test-2025') and trashed = false"
+        results = service.files().list(
+            q=query,
+            pageSize=20,
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True,
+            fields="files(id, name, mimeType, size)",
+        ).execute()
+        items = results.get("files", [])
+        zip_items = [it for it in items if it["name"].lower().endswith(".zip")]
+        if zip_items:
+            out_gdown = Path("/content/dataset_drive")
+            out_gdown.mkdir(parents=True, exist_ok=True)
+            for it in zip_items:
+                dest_zip = out_gdown / it["name"]
+                print(f"  [*] Downloading {it['name']} from Google Drive API...", flush=True)
+                request = service.files().get_media(fileId=it["id"], supportsAllDrives=True)
+                with open(dest_zip, "wb") as fh:
+                    downloader = MediaIoBaseDownload(fh, request, chunksize=50 * 1024 * 1024)
+                    done = False
+                    while not done:
+                        status, done = downloader.next_chunk()
+                with zipfile.ZipFile(dest_zip, "r") as z:
+                    z.extractall(target_extract_dir)
+                dest_zip.unlink()
+            extract_all_nested_zips(target_extract_dir)
+            return target_extract_dir
+    except Exception as api_err:
+        print(f"  [!] Google Drive API lookup note: {api_err}")
+
+    # Fallback: try gdown on the user's Google Drive folder
     try:
         import gdown
         out_gdown = Path("/content/dataset_drive")
