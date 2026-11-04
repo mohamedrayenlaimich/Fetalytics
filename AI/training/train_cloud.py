@@ -100,38 +100,72 @@ def auto_discover_drive_dataset(target_extract_dir: Path) -> Optional[Path]:
 
     # Try authenticated Google Drive API v3 (works in Colab even for private/shared folders)
     try:
-        from google.colab import auth
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaIoBaseDownload
-        import io
 
-        print("  [*] Authenticating with Google Drive API to locate DatasetV3...", flush=True)
-        auth.authenticate_user()
+        print("  [*] Querying Google Drive API v3 to locate DatasetV3...", flush=True)
+        try:
+            import IPython
+            from google.colab import auth
+            if IPython.get_ipython() is not None:
+                auth.authenticate_user()
+        except Exception:
+            pass
+
         service = build("drive", "v3")
 
-        # Search inside the target folder ID or anywhere in Drive for DatasetV3.zip
-        query = f"('{folder_id}' in parents or name contains 'DatasetV3' or name contains 'val-2025' or name contains 'test-2025') and trashed = false"
+        # Search inside the target folder ID or anywhere in Drive for DatasetV3.zip / partition zips
+        query = (
+            f"('{folder_id}' in parents or name contains 'Dataset' or name contains 'dataset' "
+            f"or name contains 'val-2025' or name contains 'test-2025' or name contains 'train-2025') "
+            f"and trashed = false"
+        )
         results = service.files().list(
             q=query,
-            pageSize=20,
+            pageSize=50,
             includeItemsFromAllDrives=True,
             supportsAllDrives=True,
             fields="files(id, name, mimeType, size)",
         ).execute()
         items = results.get("files", [])
-        zip_items = [it for it in items if it["name"].lower().endswith(".zip")]
+
+        # Also check one level inside any returned folders
+        for folder_item in [it for it in items if it.get("mimeType") == "application/vnd.google-apps.folder"]:
+            sub_res = service.files().list(
+                q=f"'{folder_item['id']}' in parents and trashed = false",
+                pageSize=50,
+                includeItemsFromAllDrives=True,
+                supportsAllDrives=True,
+                fields="files(id, name, mimeType, size)",
+            ).execute()
+            items.extend(sub_res.get("files", []))
+
+        # Deduplicate by file id
+        seen_ids = set()
+        zip_items = []
+        for it in items:
+            if it["id"] not in seen_ids and it["name"].lower().endswith(".zip"):
+                seen_ids.add(it["id"])
+                zip_items.append(it)
+
+        # If DatasetV3.zip is present, prefer downloading only DatasetV3.zip (since it contains the others)
+        dataset_v3_only = [it for it in zip_items if "datasetv3" in it["name"].lower()]
+        if dataset_v3_only:
+            zip_items = dataset_v3_only[:1]
+
         if zip_items:
             out_gdown = Path("/content/dataset_drive")
             out_gdown.mkdir(parents=True, exist_ok=True)
             for it in zip_items:
                 dest_zip = out_gdown / it["name"]
-                print(f"  [*] Downloading {it['name']} from Google Drive API...", flush=True)
+                print(f"  [*] Downloading {it['name']} ({int(it.get('size', 0)) / 1e6:.1f} MB) via Google Drive API...", flush=True)
                 request = service.files().get_media(fileId=it["id"], supportsAllDrives=True)
                 with open(dest_zip, "wb") as fh:
                     downloader = MediaIoBaseDownload(fh, request, chunksize=50 * 1024 * 1024)
                     done = False
                     while not done:
                         status, done = downloader.next_chunk()
+                print(f"  [*] Extracting {dest_zip.name}...", flush=True)
                 with zipfile.ZipFile(dest_zip, "r") as z:
                     z.extractall(target_extract_dir)
                 dest_zip.unlink()
