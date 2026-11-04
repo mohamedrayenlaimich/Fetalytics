@@ -68,19 +68,17 @@ def auto_discover_drive_dataset(target_extract_dir: Path) -> Optional[Path]:
     folder_id = "1am61JzoUFojmqvhQ1ztc2dllkmxtmlSD"
     search_roots = [
         Path("/content/dataset_drive"),
-        Path(f"/content/drive/.shortcut-targets-by-id/{folder_id}"),
         Path("/content/drive/MyDrive"),
         Path("/content/drive/Shareddrives"),
-        Path("/content/drive"),
     ]
 
     for root in search_roots:
-        if not root.exists():
-            continue
-        if (root / "videos").exists() or (root / "val" / "videos").exists():
-            return root
-
         try:
+            if not root.exists():
+                continue
+            if (root / "videos").exists() or (root / "val" / "videos").exists():
+                return root
+
             # Recursive search up to all folders in Drive for DatasetV3.zip or partition zips
             cand_zips = list(root.rglob("*Dataset*.zip")) + list(root.rglob("*dataset*.zip"))
             if not cand_zips:
